@@ -4,7 +4,7 @@
 
 
 
-# DeepSeek-V4 Mini: A Paper-Faithful PyTorch Research Implementation
+# DeepSeek-V4 Mini: A Paper-Faithful From-Scratch PyTorch Implementation
 
 ![Python](https://img.shields.io/badge/python-3.9+-blue.svg)
 ![PyTorch](https://img.shields.io/badge/PyTorch-%23EE4C2C.svg?style=flat&logo=PyTorch&logoColor=white)
