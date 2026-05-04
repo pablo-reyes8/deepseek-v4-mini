@@ -266,6 +266,32 @@ docker build -t deepseekv4-mini .
 docker compose run --rm tests
 ```
 
+## Command Line Tools
+
+After installing with `pip install -e ".[dev,data]"`, the project exposes three CLIs:
+
+```bash
+deepseekv4-data presets
+deepseekv4-data synthetic-inspect --block-size 32 --batch-size 2
+deepseekv4-train smoke --attention hca --ffn dense --max-batches 2
+deepseekv4-inspect model-summary --attention csa --ffn moe
+deepseekv4-inspect module-tests csa --quiet
+```
+
+The same commands work without installation through Python modules:
+
+```bash
+python -m scripts.data_cli synthetic-inspect --block-size 32 --batch-size 2
+python -m scripts.train_cli smoke --attention mha --ffn dense --max-batches 1 --quiet
+python -m scripts.inspect_cli module-tests training --quiet
+```
+
+These CLIs are intentionally small and transparent:
+
+- `data_cli`: list presets, inspect synthetic data, inspect/download HF text presets.
+- `train_cli`: run a tiny synthetic training smoke test with configurable attention/FFN/mHC/MTP.
+- `inspect_cli`: summarize model parameter structure and run tests by module.
+
 ## CI Strategy
 
 CI is path-aware:

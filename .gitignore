@@ -49,4 +49,4 @@ data/cache/
 # OS/filesystem noise
 .DS_Store
 Thumbs.db
-.proyect_structure/
+proyect_structure/
