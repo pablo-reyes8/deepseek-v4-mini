@@ -25,6 +25,7 @@ TEST_TARGETS = {
     "block": ["tests/test_transformer_block.py", "tests/test_deepseek_model.py"],
     "training": ["tests/training"],
     "data": ["tests/data"],
+    "parallel": ["tests/parallel"],
     "all": ["tests"],
 }
 

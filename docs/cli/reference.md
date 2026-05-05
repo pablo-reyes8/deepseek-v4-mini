@@ -1,6 +1,6 @@
 # CLI Reference
 
-The project exposes three command groups.
+The project exposes four command groups.
 
 After editable install:
 
@@ -8,6 +8,7 @@ After editable install:
 deepseekv4-data
 deepseekv4-train
 deepseekv4-inspect
+deepseekv4-parallel
 ```
 
 Without installation:
@@ -16,6 +17,7 @@ Without installation:
 python -m scripts.data_cli
 python -m scripts.train_cli
 python -m scripts.inspect_cli
+python -m scripts.parallel_cli
 ```
 
 ## Data CLI
@@ -97,4 +99,37 @@ Run tests for one module group:
 python -m scripts.inspect_cli module-tests csa --quiet
 python -m scripts.inspect_cli module-tests training --quiet
 python -m scripts.inspect_cli module-tests data --quiet
+```
+
+## Parallel CLI
+
+Inspect a layer/device placement plan:
+
+```bash
+python -m scripts.parallel_cli plan \
+  --n-layers 6 \
+  --devices cpu,cpu \
+  --balance 2,4
+```
+
+Run a CPU-safe model-parallel forward pass:
+
+```bash
+python -m scripts.parallel_cli model-parallel-smoke \
+  --devices cpu \
+  --n-layers 2
+```
+
+Run a one-process DDP smoke check with `gloo`:
+
+```bash
+python -m scripts.parallel_cli ddp-smoke \
+  --backend gloo \
+  --n-layers 1
+```
+
+Run only the parallelism tests:
+
+```bash
+python -m scripts.parallel_cli tests --quiet
 ```

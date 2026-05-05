@@ -30,6 +30,7 @@ This repository is not a toy Transformer wrapper or a production model clone. It
 - [📚 Dataset Presets](#-dataset-presets)
 - [🔬 Training A Tiny Model](#-training-a-tiny-model)
 - [Training With Batches and Indexing](#training-with-batches-and-indexing)
+- [Parallelism](#parallelism)
 - [Docker Support](#docker-support)
 - [🛠️ Command Line Tools](#️-command-line-tools)
 - [CI Strategy](#ci-strategy)
@@ -95,21 +96,31 @@ This project isolates those innovations into a mini implementation where each co
 │   ├── chekpoints.py               # checkpoint save/load utilities
 │   └── *_metrics.py                # LM, MoE, mHC, MTP, and module diagnostics
 │
+├── parallel/                       # PyTorch-native educational parallelism
+│   ├── parallel_config.py          # DDP/model-parallel configuration object
+│   ├── parallel_utils.py           # rank helpers, seeding, device moves, metric reduction
+│   ├── data_parallel.py            # DDP setup, samplers, train/eval wrappers, save helpers
+│   ├── model_parallel.py           # layerwise/blockwise DeepSeekV4LM placement
+│   └── README.md                   # scope, limitations, and usage notes
+│
 ├── scripts/                        # operational CLIs
 │   ├── data_cli.py                 # list, download, tokenize, and inspect datasets
 │   ├── train_cli.py                # tiny synthetic training smoke runs
-│   └── inspect_cli.py              # model summaries and module-level test runner
+│   ├── inspect_cli.py              # model summaries and module-level test runner
+│   └── parallel_cli.py             # DDP/model-parallel smoke tests and placement plans
 │
 ├── docs/                           # architecture and configuration reference
 │   ├── architecture/               # CSA, HCA, MoE, mHC, MTP, and model overview
 │   ├── training/                   # pipeline, Muon, scheduler, autocast, metrics, EMA/checkpoints
 │   ├── config_reference/           # hyperparameter reference by subsystem
 │   ├── data/                       # dataset guide
+│   ├── parallel/                   # DDP/model-parallel scope and limitations
 │   └── cli/                        # command line reference
 │
 ├── tests/                          # CPU-safe coverage for model behavior and causality
 │   ├── data/                       # dataset preset and causal text loader tests
 │   ├── training/                   # optimizer, scheduler, batch, and tiny-training tests
+│   ├── parallel/                   # DDP/model-parallel CPU smoke and utility tests
 │   ├── test_csa.py                 # CSA shape, causality, and gradient checks
 │   ├── test_hca.py                 # HCA compression/local-window checks
 │
@@ -141,6 +152,7 @@ Recommended entry points:
 - [Model Config Reference](docs/config_reference/model.md)
 - [Training Config Reference](docs/config_reference/training.md)
 - [Data Config Reference](docs/config_reference/data.md)
+- [Parallelism Guide](docs/parallel/overview.md)
 - [CLI Reference](docs/cli/reference.md)
 
 ## 🚀 Installation
@@ -338,6 +350,26 @@ cfg = SyntheticRetrievalConfig(
 train_loader, val_loader, tokenizer = create_synthetic_retrieval_dataloaders(cfg)
 ```
 
+## Parallelism
+
+The repo includes a top-level `parallel/` package for PyTorch-native distributed experiments that stay close to the architecture without claiming custom runtime engineering from the paper.
+
+Implemented now:
+
+- **DDP data parallelism:** `torch.distributed`, `DistributedDataParallel`, `DistributedSampler`, rank-aware checkpoint saves, and scalar metric aggregation.
+- **Layerwise model parallelism:** whole `DeepSeekV4LM` blocks are assigned to ordered devices and activations are moved between block boundaries.
+- **CPU verification:** config validation, one-process `gloo` DDP, sampler behavior, metric reductions, model-parallel equivalence on CPU, and mHC wrapper compatibility.
+
+Not implemented by design: custom CUDA kernels, FP4/FP8 training kernels, NCCL topology scheduling, DualPipe, and true all-to-all expert parallelism.
+
+```bash
+python -m scripts.parallel_cli plan --n-layers 6 --devices cpu,cpu --balance 2,4
+python -m scripts.parallel_cli model-parallel-smoke --devices cpu --n-layers 2
+python -m scripts.parallel_cli ddp-smoke --backend gloo --n-layers 1
+```
+
+For the full scope and limitations, see [Parallelism Guide](docs/parallel/overview.md).
+
 ## Docker Support
 
 ```bash
@@ -347,7 +379,7 @@ docker compose run --rm tests
 
 ## 🛠️ Command Line Tools
 
-After installing with `pip install -e ".[dev,data]"`, the project exposes three transparent CLIs for immediate interaction:
+After installing with `pip install -e ".[dev,data]"`, the project exposes four transparent CLIs for immediate interaction:
 
 ```bash
 deepseekv4-data presets
@@ -355,6 +387,9 @@ deepseekv4-data synthetic-inspect --block-size 32 --batch-size 2
 deepseekv4-train smoke --attention hca --ffn dense --max-batches 2
 deepseekv4-inspect model-summary --attention csa --ffn moe
 deepseekv4-inspect module-tests csa --quiet
+deepseekv4-parallel plan --n-layers 4 --devices cpu,cpu
+deepseekv4-parallel model-parallel-smoke --devices cpu --n-layers 2
+deepseekv4-parallel ddp-smoke --backend gloo --n-layers 1
 ```
 
 The same commands work natively without CLI installation through Python modules:
@@ -363,12 +398,14 @@ The same commands work natively without CLI installation through Python modules:
 python -m scripts.data_cli synthetic-inspect --block-size 32 --batch-size 2
 python -m scripts.train_cli smoke --attention mha --ffn dense --max-batches 1 --quiet
 python -m scripts.inspect_cli module-tests training --quiet
+python -m scripts.parallel_cli tests --quiet
 ```
 
 **CLI Scope:**
 - `data_cli`: List presets, inspect synthetic data, and download HF text presets.
 - `train_cli`: Run a tiny synthetic training smoke test with configurable attention/FFN/mHC/MTP.
 - `inspect_cli`: Summarize model parameter structure and execute targeted module tests.
+- `parallel_cli`: Inspect model placement, run CPU-safe layerwise model-parallel smoke tests, run one-process `gloo` DDP smoke tests, and launch `tests/parallel`.
 
 ## CI Strategy
 
@@ -376,6 +413,7 @@ Continuous Integration is strictly path-aware to ensure speed without losing cri
 - Changes in `src/`, configs, or packaging trigger **model & component tests**.
 - Changes in `training/` or `tests/training/` trigger **training-stack tests**.
 - Changes in `data/` or `tests/data/` trigger **dataset loader tests**.
+- Changes in `parallel/`, `scripts/parallel_cli.py`, or `tests/parallel/` trigger **parallelism tests**.
 - *All* changes run a lightweight import smoke test.
 
 ## Notes on Scope

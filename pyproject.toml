@@ -25,9 +25,10 @@ dev = ["pytest>=8.0", "ruff>=0.4"]
 deepseekv4-data = "scripts.data_cli:main"
 deepseekv4-train = "scripts.train_cli:main"
 deepseekv4-inspect = "scripts.inspect_cli:main"
+deepseekv4-parallel = "scripts.parallel_cli:main"
 
 [tool.setuptools]
-packages = ["src", "src.transformer_modules", "training", "data", "scripts"]
+packages = ["src", "src.transformer_modules", "training", "data", "scripts", "parallel"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

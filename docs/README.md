@@ -45,3 +45,4 @@ The docs are intentionally practical:
 
 - [CLI Reference](cli/reference.md)
 - [Dataset Guide](data/datasets.md)
+- [Parallelism Guide](parallel/overview.md)
