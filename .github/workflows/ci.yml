@@ -13,6 +13,7 @@ jobs:
       training: ${{ steps.filter.outputs.training }}
       data: ${{ steps.filter.outputs.data }}
       parallel: ${{ steps.filter.outputs.parallel }}
+      inference: ${{ steps.filter.outputs.inference }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v4
@@ -46,6 +47,14 @@ jobs:
               - "scripts/parallel_cli.py"
               - "src/**"
               - "training/**"
+              - "pyproject.toml"
+              - "requirements.txt"
+              - ".github/workflows/**"
+            inference:
+              - "inference/**"
+              - "tests/inference/**"
+              - "src/**"
+              - "data/**"
               - "pyproject.toml"
               - "requirements.txt"
               - ".github/workflows/**"
@@ -133,3 +142,19 @@ jobs:
           pip install -e ".[dev,data]"
       - name: Run CPU parallelism tests
         run: pytest tests/parallel
+
+  inference-tests:
+    needs: changes
+    if: needs.changes.outputs.inference == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,data]"
+      - name: Run CPU inference tests
+        run: pytest tests/inference

@@ -1,0 +1,98 @@
+from __future__ import annotations
+
+from typing import Any, Optional
+
+import torch
+
+from inference.cache_utils import (
+    normalize_position_ids,
+    resolve_cache_dtype,
+    resolve_device,
+)
+from inference.decode import update_cache_with_token
+from inference.hybrid_cache import DeepSeekV4InferenceCache, build_inference_cache
+from inference.inference_config import InferenceConfig
+
+
+@torch.no_grad()
+def prefill(
+    model: torch.nn.Module,
+    input_ids: torch.Tensor,
+    attention_mask: Optional[torch.Tensor] = None,
+    position_ids: Optional[torch.Tensor] = None,
+    inference_config: Optional[InferenceConfig] = None,
+    return_aux: bool = False,
+) -> dict[str, Any]:
+    cfg = inference_config or InferenceConfig()
+    cfg.validate()
+
+    device = resolve_device(model, cfg.device)
+    cache_dtype = resolve_cache_dtype(cfg.cache_dtype)
+    input_ids = input_ids.to(device=device, dtype=torch.long)
+    if input_ids.dim() != 2:
+        raise ValueError(f"input_ids must have shape [B,T], got {tuple(input_ids.shape)}")
+    if input_ids.shape[1] == 0:
+        raise ValueError("prefill requires at least one prompt token.")
+
+    if attention_mask is not None:
+        attention_mask = attention_mask.to(device=device)
+
+    batch_size, seq_len = input_ids.shape
+    position_ids = normalize_position_ids(
+        position_ids,
+        batch_size=batch_size,
+        seq_len=seq_len,
+        device=device,
+    )
+    cache = build_inference_cache(
+        model,
+        batch_size=batch_size,
+        device=device,
+        dtype=cache_dtype,
+        local_window_size=cfg.local_window_size,
+    )
+
+    for idx in range(seq_len):
+        mask_t = attention_mask[:, idx : idx + 1] if attention_mask is not None else None
+        update_cache_with_token(
+            model,
+            input_ids_t=input_ids[:, idx : idx + 1],
+            cache=cache,
+            position_ids_t=position_ids[:, idx : idx + 1],
+            attention_mask_t=mask_t,
+            inference_config=cfg,
+        )
+
+    outputs = model(
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+        position_ids=position_ids,
+        return_aux=return_aux,
+    )
+    aux = outputs.get("aux", {}) if return_aux else {}
+    if return_aux:
+        aux["cache_summary"] = cache.cache_summary()
+
+    return {
+        "logits": outputs["logits"][:, -1:, :],
+        "full_logits": outputs["logits"],
+        "hidden_states": outputs.get("hidden_states", None),
+        "cache": cache,
+        "aux": aux,
+    }
+
+
+def empty_cache_like_prefill(
+    model: torch.nn.Module,
+    input_ids: torch.Tensor,
+    inference_config: Optional[InferenceConfig] = None,
+) -> DeepSeekV4InferenceCache:
+    cfg = inference_config or InferenceConfig()
+    device = resolve_device(model, cfg.device)
+    return build_inference_cache(
+        model,
+        batch_size=int(input_ids.shape[0]),
+        device=device,
+        dtype=resolve_cache_dtype(cfg.cache_dtype),
+        local_window_size=cfg.local_window_size,
+    )
