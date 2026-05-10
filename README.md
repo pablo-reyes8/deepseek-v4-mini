@@ -31,6 +31,7 @@ This repository is not a toy Transformer wrapper or a production model clone. It
 - [📚 Dataset Presets](#-dataset-presets)
 - [🔬 Training A Tiny Model](#-training-a-tiny-model)
 - [Training With Batches and Indexing](#training-with-batches-and-indexing)
+- [Ablation Suite](#ablation-suite)
 - [Parallelism](#parallelism)
 - [Docker Support](#docker-support)
 - [🛠️ Command Line Tools](#️-command-line-tools)
@@ -60,6 +61,7 @@ This project isolates those innovations into a mini implementation where each co
 | **MTP (Multi-Token)** | Auxiliary next-n-token heads and prediction loss |
 | **Training Engine** | AdamW groups, Muon+AdamW, cosine schedule, AMP, EMA, checkpoints, metrics |
 | **Data Pipelines** | Synthetic retrieval, TinyStories, WikiText-2, AG News, IMDB, MiniPile, FineWeb-Edu |
+| **Ablation Suite** | Six high-level experiment suites for attention, compression, mHC, MoE, MTP, and full-stack composition |
 
 ## Inference Status
 
@@ -137,6 +139,15 @@ See [Inference Overview](docs/inference/overview.md), [Cache Modes](docs/inferen
 │   ├── chekpoints.py               # checkpoint save/load utilities
 │   └── *_metrics.py                # LM, MoE, mHC, MTP, and module diagnostics
 │
+├── ablations/                      # high-level experimental suites
+│   ├── ablation_configs.py         # A1-A6 variant generation and memory-scaled configs
+│   ├── model_factory.py            # DeepSeekV4LM and MiniCausalLM ablation factory
+│   ├── data_factory.py             # synthetic/HF dataloader construction
+│   ├── evaluate_ablation.py        # LM, retrieval, and inference/cache metrics
+│   ├── run_ablation.py             # sequential runner with checkpointing and cache cleanup
+│   ├── report.py                   # summary.csv and summary.md aggregation helpers
+│   └── suites.py                   # ablation_1 ... ablation_6 public wrappers
+│
 ├── inference/                      # generation, sampling, active decode, and cache implementations
 │   ├── inference_config.py         # generation and cache-mode configuration
 │   ├── prefill.py                  # audit, MHA, and DeepSeek prefill paths
@@ -158,6 +169,7 @@ See [Inference Overview](docs/inference/overview.md), [Cache Modes](docs/inferen
 │   ├── data_cli.py                 # list, download, tokenize, and inspect datasets
 │   ├── train_cli.py                # tiny synthetic training smoke runs
 │   ├── inspect_cli.py              # model summaries and module-level test runner
+│   ├── ablation_cli.py             # run A1-A6 quick/full ablation suites
 │   ├── inference_cli.py            # checkpoint loading and text generation with KV caches
 │   └── parallel_cli.py             # DDP/model-parallel smoke tests and placement plans
 │
@@ -244,7 +256,7 @@ Dataset loader tests:
 pytest tests/data
 ```
 
-*Current validation on CPU: `749 passed, 4 skipped`*
+*Current validation on CPU: `753 passed, 4 skipped`*
 
 ## ⚙️ Model Configs
 
@@ -406,6 +418,59 @@ cfg = SyntheticRetrievalConfig(
 train_loader, val_loader, tokenizer = create_synthetic_retrieval_dataloaders(cfg)
 ```
 
+## Ablation Suite
+
+The top-level `ablations/` package turns the repo into an experimental platform rather than only an implementation. Each suite has a high-level wrapper that accepts a dataset config, memory-oriented model limits, seeds, and training budget overrides. The runner executes variants sequentially, saves checkpoints before cleanup, and clears Python/Torch/CUDA cache before moving to the next model.
+
+| Suite | Question | Main variants |
+| :--- | :--- | :--- |
+| `A1` Hybrid Attention Composition | Does CSA/HCA hybrid attention improve quality-memory trade-offs over MHA, HCA-only, and CSA-only? | `dense_mha_baseline`, `hca_only`, `csa_only`, `hybrid_csa_hca`, `hybrid_hca_csa` |
+| `A2` Compression and Window Trade-off | How do compression factor, local window, and sparse top-k affect retrieval, perplexity, and cache cost? | HCA and CSA grids over `compression_factor`, `window_size`, `top_k_blocks` |
+| `A3` mHC Utility | Does mHC improve stability in shallow and deeper low-token regimes? | MHA/hybrid with and without mHC at shallow and deeper depths |
+| `A4` MoE Routing | Are routed experts, shared experts, and balance losses useful in the mini regime? | Dense FFN, MoE no shared, shared experts, no balance, hash routing |
+| `A5` MTP Auxiliary Loss | Does MTP help convergence and generation, or distract next-token learning? | MTP off, depth/weight sweeps, weighted depth loss |
+| `A6` System-Level Stack | Which DeepSeek-style components matter most when composed? | baseline, +compressed attention, +MoE, +mHC, +MTP, full-minus variants |
+
+Python wrapper example:
+
+```python
+from ablations import ablation_1
+
+results = ablation_1(
+    data_config={
+        "dataset": "synthetic_long_context",
+        "block_size": 128,
+        "batch_size": 4,
+        "num_train_examples": 2_000,
+        "num_val_examples": 300,
+    },
+    max_model={
+        "d_model": 128,
+        "n_layers": 4,
+        "max_seq_len": 128,
+        "n_heads": 4,
+        "head_dim": 32,
+    },
+    training_config={
+        "epochs": 1,
+        "max_batches_per_epoch": 30,
+        "eval_max_batches": 10,
+        "optimizer_type": "adamw",
+        "device": "cuda",
+    },
+    seeds=[1],
+    quick=False,
+)
+```
+
+CLI smoke run:
+
+```bash
+python -m scripts.ablation_cli --ablation A1 --quick --limit-variants 1 --device cpu
+```
+
+Outputs are written under `outputs/ablations/{ablation_id}/`, with one `final_metrics.json` per variant/seed plus suite-level `summary.csv` and `summary.md`.
+
 ## Parallelism
 
 The repo includes a top-level `parallel/` package for PyTorch-native distributed experiments that stay close to the architecture without claiming custom runtime engineering from the paper.
@@ -451,6 +516,7 @@ deepseekv4-data synthetic-inspect --block-size 32 --batch-size 2
 deepseekv4-train smoke --attention hca --ffn dense --max-batches 2
 deepseekv4-inspect model-summary --attention csa --ffn moe
 deepseekv4-inspect module-tests csa --quiet
+deepseekv4-ablate --ablation A1 --quick --limit-variants 1 --device cpu
 deepseekv4-parallel plan --n-layers 4 --devices cpu,cpu
 deepseekv4-parallel model-parallel-smoke --devices cpu --n-layers 2
 deepseekv4-parallel ddp-smoke --backend gloo --n-layers 1
@@ -462,6 +528,7 @@ The same commands work natively without CLI installation through Python modules:
 python -m scripts.data_cli synthetic-inspect --block-size 32 --batch-size 2
 python -m scripts.train_cli smoke --attention mha --ffn dense --max-batches 1 --quiet
 python -m scripts.inspect_cli module-tests training --quiet
+python -m scripts.ablation_cli --ablation A1 --quick --limit-variants 1 --device cpu
 python -m scripts.parallel_cli tests --quiet
 ```
 
@@ -469,6 +536,7 @@ python -m scripts.parallel_cli tests --quiet
 - `data_cli`: List presets, inspect synthetic data, and download HF text presets.
 - `train_cli`: Run a tiny synthetic training smoke test with configurable attention/FFN/mHC/MTP.
 - `inspect_cli`: Summarize model parameter structure and execute targeted module tests.
+- `ablation_cli`: Generate and run A1-A6 ablation configs sequentially with checkpointing and cache cleanup.
 - `parallel_cli`: Inspect model placement, run CPU-safe layerwise model-parallel smoke tests, run one-process `gloo` DDP smoke tests, and launch `tests/parallel`.
 
 ## CI Strategy
@@ -478,6 +546,7 @@ Continuous Integration is strictly path-aware to ensure speed without losing cri
 - Changes in `training/` or `tests/training/` trigger **training-stack tests**.
 - Changes in `data/` or `tests/data/` trigger **dataset loader tests**.
 - Changes in `parallel/`, `scripts/parallel_cli.py`, or `tests/parallel/` trigger **parallelism tests**.
+- Changes in `ablations/`, `scripts/ablation_cli.py`, or `tests/experiments/` trigger **ablation-suite tests**.
 - *All* changes run a lightweight import smoke test.
 
 ## Notes on Scope

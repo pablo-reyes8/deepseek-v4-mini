@@ -1,6 +1,6 @@
 # CLI Reference
 
-The project exposes five command groups.
+The project exposes six command groups.
 
 After editable install:
 
@@ -9,6 +9,7 @@ deepseekv4-data
 deepseekv4-train
 deepseekv4-inspect
 deepseekv4-infer
+deepseekv4-ablate
 deepseekv4-parallel
 ```
 
@@ -19,6 +20,7 @@ python -m scripts.data_cli
 python -m scripts.train_cli
 python -m scripts.inspect_cli
 python -m scripts.inference_cli
+python -m scripts.ablation_cli
 python -m scripts.parallel_cli
 ```
 
@@ -102,6 +104,7 @@ python -m scripts.inspect_cli module-tests csa --quiet
 python -m scripts.inspect_cli module-tests training --quiet
 python -m scripts.inspect_cli module-tests data --quiet
 python -m scripts.inspect_cli module-tests inference --quiet
+python -m scripts.inspect_cli module-tests ablations --quiet
 ```
 
 ## Inference CLI
@@ -131,6 +134,39 @@ python -m scripts.inference_cli generate \
   --cache-mode deepseek_decode \
   --max-new-tokens 8 \
   --no-do-sample
+```
+
+## Ablation CLI
+
+Run a CPU-safe smoke ablation:
+
+```bash
+python -m scripts.ablation_cli \
+  --ablation A1 \
+  --quick \
+  --limit-variants 1 \
+  --device cpu
+```
+
+Generate all quick-suite runs sequentially:
+
+```bash
+python -m scripts.ablation_cli \
+  --ablation ALL \
+  --quick \
+  --seeds 1 \
+  --limit-variants 1
+```
+
+Run a larger suite with explicit seeds:
+
+```bash
+python -m scripts.ablation_cli \
+  --ablation A6 \
+  --seeds 1 2 3 \
+  --device cuda \
+  --max-batches-per-epoch 500 \
+  --eval-max-batches 100
 ```
 
 ## Parallel CLI

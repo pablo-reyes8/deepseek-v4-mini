@@ -27,9 +27,10 @@ deepseekv4-train = "scripts.train_cli:main"
 deepseekv4-inspect = "scripts.inspect_cli:main"
 deepseekv4-parallel = "scripts.parallel_cli:main"
 deepseekv4-infer = "scripts.inference_cli:main"
+deepseekv4-ablate = "scripts.ablation_cli:main"
 
 [tool.setuptools]
-packages = ["src", "src.transformer_modules", "training", "data", "scripts", "parallel", "inference"]
+packages = ["src", "src.transformer_modules", "training", "data", "scripts", "parallel", "inference", "ablations"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

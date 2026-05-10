@@ -27,6 +27,7 @@ TEST_TARGETS = {
     "data": ["tests/data"],
     "parallel": ["tests/parallel"],
     "inference": ["tests/inference"],
+    "ablations": ["tests/experiments"],
     "all": ["tests"],
 }
 
