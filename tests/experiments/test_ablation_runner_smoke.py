@@ -51,11 +51,17 @@ def test_ablation_runner_one_batch_smoke(tmp_path: Path):
     summary_csv = tmp_path / "ablations" / "A1" / "summary.csv"
 
     assert (output_dir / "final_metrics.json").exists()
+    assert (output_dir / "metrics.jsonl").exists()
     assert (output_dir / "last.pt").exists()
     assert summary_csv.exists()
+    assert (tmp_path / "ablations" / "A1" / "summary_by_variant.csv").exists()
 
     metrics = json.loads((output_dir / "final_metrics.json").read_text(encoding="utf-8"))
     assert metrics["ablation_id"] == "A1"
+    assert metrics["label_convention"] == "shifted_labels_from_dataloader"
+    assert "model_config" in metrics
+    assert "data_config" in metrics
+    assert "training_config" in metrics
     assert metrics["metrics"]["system"]["global_step"] >= 1
 
     rows = list(csv.DictReader(summary_csv.open("r", encoding="utf-8")))

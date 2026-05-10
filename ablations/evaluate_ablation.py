@@ -39,7 +39,7 @@ def evaluate_retrieval(
     max_batches: int | None = 100,
     device: str | torch.device = "cpu",
 ) -> dict[str, float]:
-    del model
+    model.eval()
     device = torch.device(device)
     answer_id = _token_id(tokenizer, "answer")
     colon_id = _token_id(tokenizer, ":")
@@ -52,22 +52,32 @@ def evaluate_retrieval(
         batch = move_batch_to_device(normalize_lm_batch(batch), device)
         input_ids = batch["input_ids"]
         labels = batch["labels"]
-        if answer_id is None or colon_id is None:
-            total += int(labels.numel())
-            correct += 0
-            continue
-        marker = (input_ids[:, :-1] == answer_id) & (input_ids[:, 1:] == colon_id)
-        target_positions = torch.nn.functional.pad(marker, (1, 0), value=False)
+        attention_mask = batch.get("attention_mask", None)
+
+        outputs = model(
+            input_ids=input_ids,
+            labels=None,
+            attention_mask=attention_mask,
+            return_aux=False,
+        )
+        logits = outputs["logits"]
+        preds = logits.argmax(dim=-1)
+
+        if answer_id is not None and colon_id is not None:
+            marker = (input_ids[:, :-1] == answer_id) & (input_ids[:, 1:] == colon_id)
+            target_positions = torch.nn.functional.pad(marker, (1, 0), value=False)
+        else:
+            target_positions = labels.ne(-100) & labels.ne(0)
+
         if target_positions.any():
             total += int(target_positions.sum().item())
-            correct += int(labels[target_positions].ne(0).sum().item())
+            correct += int((preds[target_positions] == labels[target_positions]).sum().item())
 
     accuracy = float(correct) / max(1, total)
     return {
         "retrieval_accuracy": accuracy,
         "answer_token_accuracy": accuracy,
         "key_value_copy_accuracy": accuracy,
-        "long_range_accuracy_by_distance_bucket": 0.0,
         "retrieval_targets": float(total),
     }
 
@@ -99,6 +109,10 @@ def benchmark_inference(
         elapsed = time.perf_counter() - start
         stats = result.get("cache_stats") or {}
         out[f"inference/{mode}/ok"] = True
+        out[f"inference/{mode}/cache_mode"] = mode
+        out[f"inference/{mode}/logits_from_cache"] = bool(stats.get("logits_from_cache", False))
+        out[f"inference/{mode}/active_decode"] = bool(stats.get("active_decode", False))
+        out[f"inference/{mode}/cache_population"] = str(stats.get("cache_population", "unknown"))
         out[f"inference/{mode}/prefill_time_ms"] = float(result.get("prefill_time", 0.0) * 1000.0)
         out[f"inference/{mode}/decode_time_per_token_ms"] = float(result.get("decode_time_per_token", 0.0) * 1000.0)
         out[f"inference/{mode}/cache_memory_mb"] = float(stats.get("cache_memory_mb", 0.0))

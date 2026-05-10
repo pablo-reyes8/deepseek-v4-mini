@@ -31,6 +31,9 @@ def run_single_ablation_config(config: dict[str, Any]) -> dict[str, Any]:
     output_dir = Path(config["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "config.json").write_text(json.dumps(config, indent=2, default=str), encoding="utf-8")
+    metrics_jsonl = output_dir / "metrics.jsonl"
+    if metrics_jsonl.exists():
+        metrics_jsonl.unlink()
 
     set_seed(int(config.get("seed", 1)))
     train_loader, val_loader, tokenizer = build_dataloaders_from_ablation_config(config)
@@ -56,6 +59,7 @@ def run_single_ablation_config(config: dict[str, Any]) -> dict[str, Any]:
 
     global_step = 0
     train_stats = {}
+    val_stats = {}
     start = time.perf_counter()
     for epoch in range(int(train_cfg["epochs"])):
         train_stats, global_step = train_one_epoch(
@@ -75,6 +79,28 @@ def run_single_ablation_config(config: dict[str, Any]) -> dict[str, Any]:
             print_module_diagnostics=False,
             is_main_process=False,
         )
+        val_stats = evaluate_lm(
+            model=model,
+            val_loader=val_loader,
+            max_batches=int(train_cfg.get("eval_max_batches", 1)),
+            device=device,
+            precision=precision,
+        )
+        append_jsonl(
+            metrics_jsonl,
+            {
+                "event": "epoch",
+                "epoch": epoch,
+                "global_step": global_step,
+                "train_loss": train_stats.get("loss"),
+                "train_lm_loss": train_stats.get("lm_loss"),
+                "train_mtp_loss": train_stats.get("mtp_loss"),
+                "train_moe_aux_loss": train_stats.get("moe_aux_loss"),
+                "val_loss": val_stats.get("loss"),
+                "val_lm_loss": val_stats.get("lm_loss"),
+                "val_perplexity": val_stats.get("perplexity"),
+            },
+        )
     elapsed = time.perf_counter() - start
 
     if train_cfg.get("save_checkpoints", True):
@@ -88,13 +114,14 @@ def run_single_ablation_config(config: dict[str, Any]) -> dict[str, Any]:
             output_dir / "last.pt",
         )
 
-    val_stats = evaluate_lm(
-        model=model,
-        val_loader=val_loader,
-        max_batches=int(train_cfg.get("eval_max_batches", 1)),
-        device=device,
-        precision=precision,
-    )
+    if not val_stats:
+        val_stats = evaluate_lm(
+            model=model,
+            val_loader=val_loader,
+            max_batches=int(train_cfg.get("eval_max_batches", 1)),
+            device=device,
+            precision=precision,
+        )
     retrieval_stats = evaluate_retrieval(
         model=model,
         val_loader=val_loader,
@@ -132,25 +159,43 @@ def run_single_ablation_config(config: dict[str, Any]) -> dict[str, Any]:
         "variant_name": config["variant_name"],
         "seed": config["seed"],
         "output_dir": str(output_dir),
+        "failed": False,
+        "label_convention": "shifted_labels_from_dataloader",
+        "model_config": config["model_config"],
+        "data_config": config["data_config"],
+        "training_config": config["training_config"],
         "metrics": metrics,
     }
+    append_jsonl(
+        metrics_jsonl,
+        {
+            "event": "final",
+            "global_step": global_step,
+            "train_loss": train_stats.get("loss"),
+            "val_loss": val_stats.get("loss"),
+            "val_perplexity": val_stats.get("perplexity"),
+            "retrieval_accuracy": retrieval_stats.get("retrieval_accuracy"),
+        },
+    )
     (output_dir / "final_metrics.json").write_text(json.dumps(final, indent=2, default=str), encoding="utf-8")
 
-    summary_csv = Path("outputs/ablations") / config["ablation_id"] / "summary.csv"
-    if str(output_dir).startswith("outputs/ablations"):
-        summary_csv = Path("outputs/ablations") / config["ablation_id"] / "summary.csv"
-    else:
-        summary_csv = output_dir.parents[1] / "summary.csv"
+    summary_csv = _summary_csv_for_config(config)
     append_summary_row(summary_csv, flatten_metrics(final))
     write_summary_markdown(config["ablation_id"], summary_csv.parent)
     _cleanup_after_run(model, optimizer)
     return final
 
 
-def run_ablation_suite(configs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def run_ablation_suite(configs: list[dict[str, Any]], fail_fast: bool = False) -> list[dict[str, Any]]:
     results = []
     for config in configs:
-        results.append(run_single_ablation_config(config))
+        try:
+            results.append(run_single_ablation_config(config))
+        except Exception as exc:
+            failure = _record_failed_run(config, exc)
+            results.append(failure)
+            if fail_fast:
+                raise
     return results
 
 
@@ -165,6 +210,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-batches-per-epoch", type=int, default=None)
     parser.add_argument("--eval-max-batches", type=int, default=None)
     parser.add_argument("--epochs", type=int, default=None)
+    parser.add_argument("--fail-fast", action="store_true")
     return parser
 
 
@@ -184,7 +230,7 @@ def main(argv: list[str] | None = None) -> None:
         training_config=training_overrides,
         limit_variants=args.limit_variants,
     )
-    run_ablation_suite(configs)
+    run_ablation_suite(configs, fail_fast=args.fail_fast)
 
 
 def _build_optimizer(model: torch.nn.Module, train_cfg: dict[str, Any]):
@@ -218,6 +264,55 @@ def _cleanup_after_run(model: torch.nn.Module, optimizer: Any) -> None:
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.ipc_collect()
+
+
+def append_jsonl(path: str | Path, row: dict[str, Any]) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(row, default=str) + "\n")
+
+
+def _summary_csv_for_config(config: dict[str, Any]) -> Path:
+    output_dir = Path(config["output_dir"])
+    return output_dir.parents[1] / "summary.csv"
+
+
+def _record_failed_run(config: dict[str, Any], exc: Exception) -> dict[str, Any]:
+    output_dir = Path(config["output_dir"])
+    output_dir.mkdir(parents=True, exist_ok=True)
+    failure = {
+        "ablation_id": config["ablation_id"],
+        "variant_name": config["variant_name"],
+        "seed": config["seed"],
+        "output_dir": str(output_dir),
+        "failed": True,
+        "error_type": type(exc).__name__,
+        "error_message": str(exc),
+        "label_convention": "shifted_labels_from_dataloader",
+        "model_config": config["model_config"],
+        "data_config": config["data_config"],
+        "training_config": config["training_config"],
+    }
+    (output_dir / "final_metrics.json").write_text(
+        json.dumps(failure, indent=2, default=str),
+        encoding="utf-8",
+    )
+    append_jsonl(
+        output_dir / "metrics.jsonl",
+        {
+            "event": "failed",
+            "error_type": failure["error_type"],
+            "error_message": failure["error_message"],
+        },
+    )
+    summary_csv = _summary_csv_for_config(config)
+    append_summary_row(summary_csv, flatten_metrics(failure))
+    write_summary_markdown(config["ablation_id"], summary_csv.parent)
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    return failure
 
 
 if __name__ == "__main__":

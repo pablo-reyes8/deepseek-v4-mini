@@ -256,7 +256,7 @@ Dataset loader tests:
 pytest tests/data
 ```
 
-*Current validation on CPU: `753 passed, 4 skipped`*
+*Current validation on CPU: `756 passed, 4 skipped`*
 
 ## ⚙️ Model Configs
 

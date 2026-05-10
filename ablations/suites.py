@@ -16,6 +16,7 @@ def run_named_ablation(
     quick: bool = False,
     base_output_dir: str = "outputs/ablations",
     limit_variants: int | None = None,
+    fail_fast: bool = False,
 ) -> list[dict[str, Any]]:
     configs = build_ablation_suite(
         ablation_id,
@@ -27,7 +28,7 @@ def run_named_ablation(
         training_config=training_config,
         limit_variants=limit_variants,
     )
-    return run_ablation_suite(configs)
+    return run_ablation_suite(configs, fail_fast=fail_fast)
 
 
 def ablation_1(**kwargs):
